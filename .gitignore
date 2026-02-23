@@ -205,3 +205,26 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+
+# ========================================
+# Astronomy / ZTF data (large files)
+# ========================================
+*.fits
+*.fits.gz
+*.fz
+*.fit
+
+# Common output/data folders (adapt as needed)
+data/
+raw_data/
+ztf_data/
+downloads/
+outputs/
+results/
+figures/
+plots/
+
+# Optional: logs produced by pipeline
+logs/
