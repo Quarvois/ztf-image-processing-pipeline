@@ -32,7 +32,7 @@ Below are the results and diagnostic tests generated during development:
 
 | Sigma Clipping & Smoothing | PSF Homogenization |
 |:---:|:---:|
-| ![Sigma Test](./assets/Plot3d_SmoothingSigma.png) | ![PSF Test](./assets/Smoothing_Impact.png) |
+| ![Sigma Test](./assets/Plot3D_SmoothingSigma.png) | ![PSF Test](./assets/Smoothing_impact.png) |
 | *Optimizing sigma values for noise reduction.* | *Impact of Gaussian smoothing on subtraction residuals.* |
 
 ## 📂 Repository Structure
