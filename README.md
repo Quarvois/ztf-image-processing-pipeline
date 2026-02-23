@@ -41,7 +41,7 @@ Below are the results and diagnostic tests generated during development:
 - `sciimg_FITS_Request.ipynb`: Data acquisition tool (Public ZTF/IRSA API).
 
 ## 🚀 Installation
-1. Clone the repo: `git clone https://github.com/...`
+1. Clone the repo: `git clone https://github.com/Quarvois/ztf-image-processing-pipeline.git`
 2. Install dependencies: `pip install -r requirements.txt`
 
 ---
