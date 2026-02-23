@@ -21,8 +21,8 @@ The pipeline is validated using data from **ZTF17aadlxmv**, a **Type Ia Supernov
 Below are the results and diagnostic tests generated during development:
 
 ### Light-Curve Results
-*Final photometric output for the Type Ia Supernova ZTF17aadlxmv.*
-![Light Curve](./assets/Comparison of ZTF17aadlxmv Fluxes 3.png)
+*Final photometric output for the Type Ia Supernova ZTF17aadlxmv.(AstroTools, the old name of the pipeline, vs. ZTF data)*
+![Light Curve](./assets/Flux_ZTF17aadlxmv.png)
 
 ### Processing Diagnostics
 | Masking & Detection | Background Analysis |
