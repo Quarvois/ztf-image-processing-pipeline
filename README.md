@@ -22,17 +22,17 @@ Below are the results and diagnostic tests generated during development:
 
 ### Light-Curve Results
 *Final photometric output for the Type Ia Supernova ZTF17aadlxmv.*
-![Light Curve](./assets/light_curve.png)
+![Light Curve](./assets/Comparison of ZTF17aadlxmv Fluxes 3.png)
 
 ### Processing Diagnostics
 | Masking & Detection | Background Analysis |
 |:---:|:---:|
-| ![Mask Test](./assets/mask_test.png) | ![Background Test](./assets/background_test.png) |
+| ![Mask Test](./assets/Mask_Test.png) | ![Background Test](./assets/Background2D_Test.png) |
 | *Testing saturation masks and star detection.* | *Impact of box size on background estimation.* |
 
 | Sigma Clipping & Smoothing | PSF Homogenization |
 |:---:|:---:|
-| ![Sigma Test](./assets/sigma_test.png) | ![PSF Test](./assets/psf_test.png) |
+| ![Sigma Test](./assets/Plot3d_SmoothingSigma.png) | ![PSF Test](./assets/Smoothing_Impact.png) |
 | *Optimizing sigma values for noise reduction.* | *Impact of Gaussian smoothing on subtraction residuals.* |
 
 ## 📂 Repository Structure
