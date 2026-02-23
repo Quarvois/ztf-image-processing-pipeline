@@ -1,0 +1,8 @@
+numpy
+pandas
+astropy
+scipy
+reproject
+matplotlib
+photutils
+requests
