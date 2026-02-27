@@ -33,7 +33,7 @@ from photutils.aperture import CircularAperture, aperture_photometry
 
 
 # ----------------------------
-# 1) CONFIG
+# CONFIG
 # ----------------------------
 
 @dataclass
@@ -83,7 +83,7 @@ class PipelineConfig:
 
 
 # ----------------------------
-# 2) CLASSE "UNE IMAGE"
+# TREATMENT AND TOOLS
 # ----------------------------
 
 class SingleFrame:
@@ -416,9 +416,9 @@ class SingleFrame:
 
 
 
-# ----------------------------
-# 3) CLASSE "DOSSIER / DATASET"
-# ----------------------------
+# --------------------------------------------
+# FOLDER TREATMENT & REFERENCE CONSTRUCTION
+# --------------------------------------------
 
 class ZTFFolderPipeline:
     """
@@ -720,8 +720,9 @@ class ZTFFolderPipeline:
 
 
 
-
-
+# --------------------------------------------
+# DIFFERENCE IMAGE CONSTRUCTION
+# --------------------------------------------
 
 class ZTFDifferencePipeline:
     def __init__(self, folder_pipeline: ZTFFolderPipeline, reference_frame: SingleFrame):
@@ -731,7 +732,6 @@ class ZTFDifferencePipeline:
         """
         self.pipe = folder_pipeline
         self.reference = reference_frame
-        # On construit l'inventaire des fichiers de science
         self.inventory = self._build_inventory()
 
 
@@ -745,21 +745,17 @@ class ZTFDifferencePipeline:
             try:
                 with fits.open(p) as hdul:
                     header = hdul[0].header
-                    # On récupère SHUTOPEN (ex: 2020-01-18T08:14:01)
                     raw_date = header.get('SHUTOPEN', header.get('OBSMJD', None))
-                    
                     if raw_date:
-                        # pd.to_datetime est très puissant pour détecter le format ISO de ZTF
                         dt = pd.to_datetime(raw_date)
                     else:
-                        dt = pd.NaT # Not a Time (équivalent NaN pour les dates)
+                        dt = pd.NaT # Not a Time 
                         
                     data.append({'path': Path(p), 'date': dt})
             except Exception as e:
                 print(f"Erreur lecture {p.name}: {e}")
         
         df = pd.DataFrame(data)
-        # Force la colonne en datetime64[ns] pour éviter le TypeError
         df['date'] = pd.to_datetime(df['date']) 
         return df
 
@@ -784,22 +780,18 @@ class ZTFDifferencePipeline:
             if not force and diff_path.exists():
                 results.append(SingleFrame(diff_path, self.pipe.cfg))
                 continue
-            
-            # 1. Préparation initiale (Reprojection, Background, Scaling ZP)
-            # On ne passe PAS de seeing_target ici pour garder le seeing original
+            # We prepare the image, but we keep the original seeing of this frame
             sci_frame = self.pipe.prepare_frame(sci_path, zp_target=self.reference.zp, seeing_target=None)
             
             s_ref = float(self.reference.seeing)
             s_sci = float(sci_frame.seeing)
 
-            # 3. Stratégie de convolution dynamique
+            # Convolution of the image with the lower seeing
             if s_sci < s_ref:
-                # La science est plus nette : on convolue la science
                 sci_frame.psf_homogenize_to(s_ref)
                 data_sci = sci_frame.data
                 data_ref = self.reference.data
             elif s_ref < s_sci:
-                # La référence est plus nette : on convolue la référence
                 ref_tmp = copy.deepcopy(self.reference)
                 ref_tmp.psf_homogenize_to(s_sci)
                 data_sci = sci_frame.data
@@ -808,15 +800,15 @@ class ZTFDifferencePipeline:
                 data_sci = sci_frame.data
                 data_ref = self.reference.data
 
-            # 4. Soustraction
+            # Subtraction
             diff_data = data_sci - data_ref
             
-            # 5. Création de l'objet de sortie
+            # Object output
             diff_frame = SingleFrame(sci_path, self.pipe.cfg)
             diff_frame.data = diff_data.astype(self.pipe.cfg.dtype)
             diff_frame.wcs = sci_frame.wcs
             diff_frame.zp = sci_frame.zp
-            diff_frame.seeing = sci_frame.seeing # On note le seeing final du match
+            diff_frame.seeing = sci_frame.seeing 
             
             if save:
                 diff_frame.save(diff_path, overwrite=True)
@@ -855,18 +847,20 @@ class ZTFDifferencePipeline:
 
 
 
-
+# --------------------------------------------
+# LIGHT CURVE EXTRACTION
+# -------------------------------------------                      
 
 class LightCurveExtractor:
     def __init__(self, diff_frames: List[SingleFrame]):
         """
-        Prend une liste d'objets SingleFrame (images de différence).
+        Take a list of SingleFrame (difference images).
         """
         self.frames = diff_frames
 
     def extract_at(self, x: float, y: float, r: float = 5.0) -> pd.DataFrame:
         """
-        Génère la courbe de lumière pour une position (x, y) donnée.
+        Generates the light curve for a given (x, y) position.
         """
         results = []
         coords = np.array([[x, y]])
@@ -874,14 +868,10 @@ class LightCurveExtractor:
         for frame in self.frames:
             df_step = frame.get_aperture_flux(coords, r=r)
             results.append(df_step)
-
-        # Concaténation et tri temporel
+            
         lc = pd.concat(results).sort_values('mjd').reset_index(drop=True)
-        
-        # Nettoyage des colonnes
         lc = lc.rename(columns={'aperture_sum': 'flux'})
-        
-        # Calcul du SNR pour analyse rapide
         lc['snr'] = lc['flux'] / lc['flux_err']
         
+
         return lc[['mjd', 'date', 'flux', 'flux_err', 'snr', 'zp']]
