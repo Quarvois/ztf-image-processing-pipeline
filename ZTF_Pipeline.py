@@ -202,8 +202,6 @@ class SingleFrame:
         if np.any(m) and self.cfg.mask.saturate_dilate_pix > 0:
             struct = generate_binary_structure(2, 2)
             m = binary_dilation(m, structure=struct, iterations=self.cfg.mask.saturate_dilate_pix)
-        # NOTE: NaN replacement intentionally removed from here.
-        # It is now applied once in build_mask() to avoid hidden side-effects.
         return m
 
 
@@ -574,7 +572,6 @@ class ZTFFolderPipeline:
         If not already set, it defaults to using the first file in the dataset.
         """
         if self.target_wcs is None or self.target_shape is None:
-            # par défaut: premier fichier, mais tu peux améliorer: choisir la "meilleure" image
             self.set_target_from_file(self.files[0])
 
 
@@ -614,15 +611,12 @@ class ZTFFolderPipeline:
         f.reproject_to(self.target_wcs, self.target_shape)
 
         # Build the boolean mask (edges + saturation + sources).
-        # The mask is ONLY used to exclude bright pixels from the background
-        # estimator — it never modifies the data array directly.
-        # NaNification is an explicit opt-in, not the default.
         mask = np.zeros(f.data.shape, dtype=bool)
         mask |= f.mask_edges()
         mask |= f.mask_saturation()
         mask |= f.mask_sources_simple()
         if apply_nan_mask:
-            f.data[mask] = np.nan   # explicit opt-in: flag bad pixels as NaN
+            f.data[mask] = np.nan  
 
         bkg = f.estimate_background(mask=mask)
         f.subtract_background(bkg)
