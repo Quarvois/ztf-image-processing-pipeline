@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-import random as rd
+import logging
 from typing import Optional, List, Tuple, Dict
 
 import numpy as np
 import pandas as pd 
-import copy
 from astropy.io import fits
 from astropy.wcs import WCS
 from scipy.ndimage import gaussian_filter, binary_dilation, generate_binary_structure
@@ -16,6 +15,8 @@ import matplotlib.pyplot as plt
 from astropy.stats import SigmaClip
 from photutils.background import Background2D, MedianBackground
 from photutils.aperture import CircularAperture, aperture_photometry
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -201,8 +202,8 @@ class SingleFrame:
         if np.any(m) and self.cfg.mask.saturate_dilate_pix > 0:
             struct = generate_binary_structure(2, 2)
             m = binary_dilation(m, structure=struct, iterations=self.cfg.mask.saturate_dilate_pix)
-        
-        self.data[m] = np.nan 
+        # NOTE: NaN replacement intentionally removed from here.
+        # It is now applied once in build_mask() to avoid hidden side-effects.
         return m
 
 
@@ -237,10 +238,15 @@ class SingleFrame:
 
     def build_mask(self) -> np.ndarray:
         """
-        Combines edge, saturation, and source masks into a single master mask.
-        This mask is used to ignore non-background pixels during statistical calculations.
+        Combines edge, saturation, and source masks into a single boolean array.
+
+        This method is purely read-only on self.data: it never modifies pixel
+        values. NaN-flagging is an explicit opt-in controlled by the caller
+        (via prepare_frame's apply_nan_mask parameter), so that the same mask
+        can be used for background estimation without corrupting the data.
+
         Returns:
-            The final unified boolean mask (True = pixel to be ignored).
+            A boolean array (True = pixel to ignore for background estimation).
         """
         m = np.zeros(self.data.shape, dtype=bool)
         m |= self.mask_edges()
@@ -254,11 +260,8 @@ class SingleFrame:
     def estimate_background(self, mask: Optional[np.ndarray] = None) -> np.ndarray:
         """
         Calculates a 2D map of the sky background using the photutils library.
-        
-        This version relies exclusively on Background2D for professional-grade 
-        background estimation, ensuring robust handling of masked areas.
         """
-        sigma_clip = SigmaClip(sigma=self.cfg.bkg.sigma_clip) # It ignores values far from the mean to avoid star contamination
+        sigma_clip = SigmaClip(sigma=self.cfg.bkg.sigma_clip)
         
         bkg = Background2D(
             self.data,
@@ -267,7 +270,9 @@ class SingleFrame:
             sigma_clip=sigma_clip,
             bkg_estimator=MedianBackground(),
             mask=mask,
-        )                                                   # This divides the image into boxes and calculates the median sky in each
+            exclude_percentile=90, 
+            edge_method='pad'       
+        )
         return np.array(bkg.background, dtype=self.cfg.dtype)
 
 
@@ -363,15 +368,29 @@ class SingleFrame:
         apertures = CircularAperture(coords, r=r)
         # Flux
         phot_table = aperture_photometry(self.data, apertures)
-        # Error estimation: sigma_sky * sqrt(N_pix)
-        sig_sky = self._robust_sigma(self.data) 
+
+        # Per-source error: sigma_local * sqrt(N_pix).
+        # We estimate the local sky noise inside an annulus around each source
+        # so that sources sitting on a galaxy or bright gradient get a larger error.
         n_pix = apertures.area
-        # Error = sigma_sky * sqrt(N_pix) because the noise adds in quadrature, and we assume the background noise dominates.
-        # We can add the poisson noise of the source if we want, but in difference images the background noise is usually dominant, so we keep it simple for now.
-        flux_err = sig_sky * np.sqrt(n_pix)
-        
+        coords_arr = np.atleast_2d(coords)
+        flux_err_list = []
+        for cx, cy in coords_arr:
+            # Local 7-sigma annulus: inner radius r+2, outer radius r+12
+            r_in, r_out = r + 2, r + 12
+            y0, y1 = int(max(0, cy - r_out)), int(min(self.data.shape[0], cy + r_out))
+            x0, x1 = int(max(0, cx - r_out)), int(min(self.data.shape[1], cx + r_out))
+            patch = self.data[y0:y1, x0:x1]
+            # Build annulus boolean mask on the patch
+            yy, xx = np.ogrid[y0:y1, x0:x1]
+            dist = np.sqrt((xx - cx)**2 + (yy - cy)**2)
+            annulus_mask = (dist >= r_in) & (dist <= r_out)
+            local_pixels = patch[annulus_mask[:patch.shape[0], :patch.shape[1]]]
+            sig_local = self._robust_sigma(local_pixels) if local_pixels.size > 4 else self._robust_sigma(self.data)
+            flux_err_list.append(sig_local * np.sqrt(n_pix))
+
         df = phot_table.to_pandas()
-        df['flux_err'] = flux_err
+        df['flux_err'] = flux_err_list
         df['date'] = self.date_str
         df['mjd'] = self.header.get('OBSMJD', 0)
         df['zp'] = self.zp
@@ -561,19 +580,30 @@ class ZTFFolderPipeline:
 
 
 
-    def prepare_frame(self, fits_path: str | Path, zp_target: Optional[float], seeing_target: Optional[float]) -> SingleFrame:
+    def prepare_frame(
+        self,
+        fits_path: str | Path,
+        zp_target: Optional[float],
+        seeing_target: Optional[float],
+        apply_nan_mask: bool = False,
+    ) -> SingleFrame:
         """
-        Executes the full preprocessing sequence on a single FITS file to make it 
-        analysis-ready.
+        Executes the full preprocessing sequence on a single FITS file.
 
-        The sequence is: 
-        1. Alignment (Reprojection) -> 2. Masking -> 3. Background Subtraction 
+        The sequence is:
+        1. Alignment (Reprojection) -> 2. Masking -> 3. Background Subtraction
         -> 4. Flux Scaling (ZP) -> 5. Resolution Matching (Seeing).
 
         Args:
             fits_path: Path to the raw FITS file.
             zp_target: The Magnitude Zero-Point to reach.
             seeing_target: The FWHM (arcsec) to reach via PSF homogenization.
+            apply_nan_mask: If False (default), the mask is only used by the
+                background estimator — pixel values are never altered.
+                This is the correct behaviour for both stacking (no holes in the
+                reference) and subtraction (no holes in the difference image).
+                Set to True only if you explicitly need NaN-flagged data, e.g.
+                to protect aperture photometry from saturated pixels.
 
         Returns:
             A preprocessed SingleFrame object.
@@ -583,7 +613,17 @@ class ZTFFolderPipeline:
         f = SingleFrame(fits_path, self.cfg)
         f.reproject_to(self.target_wcs, self.target_shape)
 
-        mask = f.build_mask()
+        # Build the boolean mask (edges + saturation + sources).
+        # The mask is ONLY used to exclude bright pixels from the background
+        # estimator — it never modifies the data array directly.
+        # NaNification is an explicit opt-in, not the default.
+        mask = np.zeros(f.data.shape, dtype=bool)
+        mask |= f.mask_edges()
+        mask |= f.mask_saturation()
+        mask |= f.mask_sources_simple()
+        if apply_nan_mask:
+            f.data[mask] = np.nan   # explicit opt-in: flag bad pixels as NaN
+
         bkg = f.estimate_background(mask=mask)
         f.subtract_background(bkg)
 
@@ -631,22 +671,27 @@ class ZTFFolderPipeline:
         """
         self._ensure_target()
         
-        files_to_process = list(self.files) 
-        rd.shuffle(files_to_process)
-        
+        # Read seeing values once and sort best-first (ascending seeing = better quality).
+        # This guarantees that if max_frames is set, we always pick the N sharpest images.
+        seeing_per_file = []
+        for p in self.files:
+            try:
+                with fits.open(p) as hdul:
+                    s = float(hdul[0].header.get("SEEING", 999))
+            except Exception:
+                s = 999.0
+            seeing_per_file.append((s, p))
+        seeing_per_file.sort(key=lambda t: t[0])   # best seeing first
+
         stack = []
         skipped_count = 0
-        
-        for p in files_to_process:
-            # Limit the number of frames to stack if max_frames is set (for testing or memory constraints)
+
+        for current_seeing, p in seeing_per_file:
+            # Limit to max_frames best images
             if max_frames is not None and len(stack) >= max_frames:
                 break
-                
-            # Seeing request check
-            with fits.open(p) as hdul:
-                current_seeing = hdul[0].header.get("SEEING", 6) # 6 si inconnu
-            
-            # Seeing check
+
+            # Seeing quality gate
             if current_seeing >= seeing_target:
                 skipped_count += 1
                 continue
@@ -658,7 +703,7 @@ class ZTFFolderPipeline:
         if not stack:
             raise ValueError(f"No image found with seeing <= {seeing_target}")
 
-        print(f"Reference built with {len(stack)} images ({skipped_count} skipped).")
+        logger.info("Reference built with %d images (%d skipped).", len(stack), skipped_count)
 
         # Median compute
         ref = np.nanmedian(np.stack(stack, axis=0), axis=0).astype(self.cfg.dtype)
@@ -683,10 +728,10 @@ class ZTFFolderPipeline:
 
         if save_path is not None:
             ref_frame.save(save_path, overwrite=overwrite)
-            print(f"Reference image saved successfully: {save_path}")
+            logger.info("Reference image saved: %s", save_path)
             
-        print(f"median of ref = {np.nanmedian(ref):.2f} ADU")
-        print(f"min ADU : {np.nanmin(ref):.2f}")
+        logger.debug("Reference median = %.2f ADU", np.nanmedian(ref))
+        logger.debug("Reference min    = %.2f ADU", np.nanmin(ref))
         return ref_frame
 
 
@@ -753,7 +798,7 @@ class ZTFDifferencePipeline:
                         
                     data.append({'path': Path(p), 'date': dt})
             except Exception as e:
-                print(f"Erreur lecture {p.name}: {e}")
+                logger.warning("Cannot read %s: %s", p.name, e)
         
         df = pd.DataFrame(data)
         df['date'] = pd.to_datetime(df['date']) 
@@ -780,29 +825,40 @@ class ZTFDifferencePipeline:
             if not force and diff_path.exists():
                 results.append(SingleFrame(diff_path, self.pipe.cfg))
                 continue
-            # We prepare the image, but we keep the original seeing of this frame
-            sci_frame = self.pipe.prepare_frame(sci_path, zp_target=self.reference.zp, seeing_target=None)
+            # apply_nan_mask=False: the mask is only used for background estimation.
+            # Sources are NOT set to NaN before subtraction — they must remain intact
+            # so that the difference image (sci - ref) correctly reveals flux variations.
+            sci_frame = self.pipe.prepare_frame(sci_path, zp_target=self.reference.zp, seeing_target=None, apply_nan_mask=False)
             
             s_ref = float(self.reference.seeing)
             s_sci = float(sci_frame.seeing)
 
-            # Convolution of the image with the lower seeing
+            # Convolution of the image with the lower seeing.
+            # We work directly on arrays (no deepcopy of the full SingleFrame object)
+            # to avoid unnecessary memory allocation on large images.
             if s_sci < s_ref:
                 sci_frame.psf_homogenize_to(s_ref)
                 data_sci = sci_frame.data
                 data_ref = self.reference.data
             elif s_ref < s_sci:
-                ref_tmp = copy.deepcopy(self.reference)
-                ref_tmp.psf_homogenize_to(s_sci)
+                fwhm_diff = np.sqrt(s_sci**2 - s_ref**2)
+                sigma_pix = fwhm_diff / (2.3548 * self.pipe.cfg.pixel_scale)
+                data_ref = gaussian_filter(self.reference.data, sigma=sigma_pix).astype(self.pipe.cfg.dtype)
                 data_sci = sci_frame.data
-                data_ref = ref_tmp.data
             else:
                 data_sci = sci_frame.data
                 data_ref = self.reference.data
 
             # Subtraction
             diff_data = data_sci - data_ref
-            
+
+            # NaN pixels in the difference come exclusively from reproject_interp
+            # border padding (pixels outside the WCS overlap between sci and ref).
+            # They carry no astrophysical information and would corrupt aperture
+            # photometry and display. We replace them with 0 (background level
+            # after background subtraction) so the difference image is clean.
+            diff_data = np.where(np.isfinite(diff_data), diff_data, 0.0)
+
             # Object output
             diff_frame = SingleFrame(sci_path, self.pipe.cfg)
             diff_frame.data = diff_data.astype(self.pipe.cfg.dtype)
