@@ -430,27 +430,27 @@ df.to_csv("lightcurve_SN2020xyz.csv", index=False)
 ### 3D Source Detection
 Threshold-based detection with Gaussian smoothing prior to masking. Sources above `median + N × σ_MAD` are identified and dilated to cover their halos.
 
-![3D visualization of source detection](docs/Plot3D_SmoothingSigma.png)
+![3D visualization of source detection](assets/Plot3D_SmoothingSigma.png)
 
 ### Masking Comparison
 Two different sigma thresholds (σ=5.0 and σ=3.0) with their respective dilation radii. A lower threshold masks more sources at the cost of masking more sky area.
 
-![Mask A and B comparison](docs/Mask_Test.png)
+![Mask Test](assets/Mask_Test.png)
 
 ### PSF Homogenization
 Before (left, seeing 2.42") and after (right, seeing degraded to 4.42") Gaussian convolution. Star profiles are broadened to match the reference PSF.
 
-![PSF homogenization effect](docs/Smoothing_impact.png)
+![PSF homogenization effect](assets/Smoothing_impact.png)
 
 ### Background Estimation
 Background maps computed with different block sizes (4 to 64 pixels). Larger blocks produce smoother maps; smaller blocks capture local gradients but risk source contamination.
 
-![Background 2D estimation test](docs/Background2D_Test.png)
+![Background Test](assets/Background2D_Test.png)
 
 ### Light Curve Validation
 Comparison of the light curve extracted by this pipeline (blue, `AstroTools`) against the official ZTF pipeline photometry (orange) for the transient `ZTF17aadlxmv`. Both pipelines recover the same supernova shape and peak brightness, validating the difference imaging and photometry implementation.
 
-![Light curve comparison](docs/Comparison_of_ZTF17aadlxmv_Fluxes_3.png)
+![Light Curve](assets/ZTF17aadlxmv_Fluxes.png)
 
 ---
 
