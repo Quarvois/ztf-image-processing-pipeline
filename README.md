@@ -95,7 +95,7 @@ ztf-image-processing-pipeline/
 ├── Notebook_ZTF_Pipeline.ipynb      # Full pipeline demo notebook
 ├── Light_Curve_Extraction.ipynb     # Light curve extraction notebook
 │
-└── docs/
+└── assets/
     ├── Comparison_of_ZTF17aadlxmv_Fluxes_3.png  # Light curve validation
     ├── Background2D_Test.png                      # Background estimation tests
     ├── Mask_Test.png                              # Masking tests
