@@ -448,7 +448,7 @@ Background maps computed with different block sizes (4 to 64 pixels). Larger blo
 ![Background Test](assets/Background2D_Test.png)
 
 ### Light Curve Validation
-Comparison of the light curve extracted by this pipeline (blue, `AstroTools`) against the official ZTF pipeline photometry (orange) for the transient `ZTF17aadlxmv`. Both pipelines recover the same supernova shape and peak brightness, validating the difference imaging and photometry implementation.
+Comparison of the light curve extracted by this pipeline (blue, `AstroTools`(old name of the pipeline)) against the official ZTF pipeline photometry (orange) for the transient `ZTF17aadlxmv`. Both pipelines recover the same supernova shape and peak brightness, validating the difference imaging and photometry implementation.
 
 ![Light Curve](assets/Flux_ZTF17aadlxmv.png)
 
