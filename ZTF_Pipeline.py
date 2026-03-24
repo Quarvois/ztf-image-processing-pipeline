@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MaskConfig:
     # Sources Detection (simple threshold)
-    detect_sigma: float = 3.0       # treshold = median + detect_sigma * sigma_bruit
+    detect_sigma: float = 3.0       # treshold = median + detect_sigma * sigma_noise
     smooth_sigma_pix: float = 1.5   # smoothing to avoid detecting noise as sources
     dilate_pix: int = 8             # Dilatation to cover halos around sources (stars/galaxies)
 
@@ -119,8 +119,8 @@ class SingleFrame:
     
     def to_hdu(self) -> fits.PrimaryHDU:
             """
-            Génère un objet PrimaryHDU en synchronisant le WCS actuel 
-            et les métadonnées (ZP, SEEING) dans le header.
+            Creates a PrimaryHDU object by synchronizing the current WCS 
+            and the metadata (ZP, SEEING) in the header.
             """
             new_header = self.header.copy()
 
@@ -202,6 +202,8 @@ class SingleFrame:
         if np.any(m) and self.cfg.mask.saturate_dilate_pix > 0:
             struct = generate_binary_structure(2, 2)
             m = binary_dilation(m, structure=struct, iterations=self.cfg.mask.saturate_dilate_pix)
+        # NOTE: NaN replacement intentionally removed from here.
+        # It is now applied once in build_mask() to avoid hidden side-effects.
         return m
 
 
@@ -460,7 +462,7 @@ class ZTFFolderPipeline:
         self.pattern = pattern
         self.files = sorted(self.folder.glob(self.pattern))
         if not self.files:
-            raise FileNotFoundError(f"Aucun FITS trouvé dans {self.folder} avec pattern={pattern}")
+            raise FileNotFoundError(f"No files found in {self.folder} with pattern={pattern}")
         self.target_wcs: Optional[WCS] = None
         self.target_shape: Optional[Tuple[int, int]] = None
 
@@ -572,6 +574,7 @@ class ZTFFolderPipeline:
         If not already set, it defaults to using the first file in the dataset.
         """
         if self.target_wcs is None or self.target_shape is None:
+            # par défaut: premier fichier, mais tu peux améliorer: choisir la "meilleure" image
             self.set_target_from_file(self.files[0])
 
 
@@ -611,12 +614,15 @@ class ZTFFolderPipeline:
         f.reproject_to(self.target_wcs, self.target_shape)
 
         # Build the boolean mask (edges + saturation + sources).
+        # The mask is ONLY used to exclude bright pixels from the background
+        # estimator — it never modifies the data array directly.
+        # NaNification is an explicit opt-in, not the default.
         mask = np.zeros(f.data.shape, dtype=bool)
         mask |= f.mask_edges()
         mask |= f.mask_saturation()
         mask |= f.mask_sources_simple()
         if apply_nan_mask:
-            f.data[mask] = np.nan  
+            f.data[mask] = np.nan   # explicit opt-in: flag bad pixels as NaN
 
         bkg = f.estimate_background(mask=mask)
         f.subtract_background(bkg)
@@ -766,8 +772,8 @@ class ZTFFolderPipeline:
 class ZTFDifferencePipeline:
     def __init__(self, folder_pipeline: ZTFFolderPipeline, reference_frame: SingleFrame):
         """
-        Initialise le pipeline de soustraction.
-        Le dossier de sortie 'diffimg' sera créé dynamiquement pour chaque image.
+        Initialise the difference image pipeline.
+        The output directory 'diffimg' will be created dynamically for each image.
         """
         self.pipe = folder_pipeline
         self.reference = reference_frame
@@ -778,7 +784,7 @@ class ZTFDifferencePipeline:
 
 
     def _build_inventory(self) -> pd.DataFrame:
-        """Scan les headers pour extraire les dates (SHUTOPEN ou OBSMJD)."""
+        """Scan headers in order to extract dates (SHUTOPEN ou OBSMJD)."""
         data = []
         for p in self.pipe.files:
             try:
